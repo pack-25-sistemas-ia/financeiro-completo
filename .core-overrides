@@ -1,0 +1,12 @@
+# Arquivos que o sistema 06 possui (o sync-core cria uma vez e nunca sobrescreve).
+package.json
+pnpm-lock.yaml
+lib/system.config.ts
+public/brand/**
+next.config.ts
+app/(app)/dashboard/**
+app/(app)/layout.tsx
+supabase/config.toml
+# Arquivos do Core que o sistema 06 não quer.
+-tests/e2e/core-dashboard.spec.ts
+-tests/e2e/screens.spec.ts

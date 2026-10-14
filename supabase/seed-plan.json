@@ -1,0 +1,66 @@
+{
+  "org": "f6f6f6f6-0000-4000-8000-000000000001",
+  "users": {
+    "owner": "dono@demo.exemplo",
+    "manager": "gestor@demo.exemplo",
+    "analyst": "analista@demo.exemplo",
+    "viewer": "consulta@demo.exemplo"
+  },
+  "password": "DemoLocal#2026",
+  "accounts": [
+    {
+      "name": "Itaú Empresas (fictício)",
+      "type": "checking",
+      "opening_cents": 8200000,
+      "include": true
+    },
+    {
+      "name": "Conta digital PJ",
+      "type": "digital",
+      "opening_cents": 1450000,
+      "include": true
+    },
+    {
+      "name": "Caixa da matriz",
+      "type": "cash",
+      "opening_cents": 200000,
+      "include": true
+    },
+    {
+      "name": "Reserva de emergência",
+      "type": "savings",
+      "opening_cents": 5000000,
+      "include": false
+    }
+  ],
+  "customers": [
+    "Alfa Indústria de Embalagens Ltda",
+    "Beta Comércio de Peças Ltda",
+    "Gama Consultoria Empresarial",
+    "Delta Logística e Transportes",
+    "Épsilon Clínica Integrada",
+    "Zeta Educação Profissional"
+  ],
+  "suppliers": [
+    "Imobiliária Central",
+    "NetFibra Telecom",
+    "Papelaria Pontual",
+    "Agência Pixel Marketing",
+    "CloudSoft Licenças",
+    "Contabilidade Exata",
+    "Transportes Rápido"
+  ],
+  "costCenters": [
+    "ADM",
+    "COM",
+    "MKT",
+    "OPS",
+    "TEC"
+  ],
+  "checksum": "903428b853f62a69",
+  "counts": {
+    "operations": 160,
+    "entries": 65,
+    "transfers": 8
+  }
+}

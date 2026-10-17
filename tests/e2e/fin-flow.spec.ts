@@ -136,9 +136,11 @@ test('baixa parcial, excesso recusado, duplo clique idempotente, quitação e es
   const h = form(page, 'Registrar recebimento');
   await h.getByLabel('Conta').selectOption({ label: 'Banco A' });
   await h.getByRole('button', { name: 'Registrar recebimento' }).click();
-  await expect(page.getByText('Baixa registrada.').first()).toBeVisible();
-  await page.reload();
-  await expect(page.getByRole('row', { name: /1\/1/ })).toContainText('Recebida');
+  // o aviso da baixa anterior ainda pode estar na tela: só o estado real da linha prova a quitação
+  await expect(async () => {
+    await page.reload();
+    await expect(page.getByRole('row', { name: /1\/1/ })).toContainText('Recebida', { timeout: 2000 });
+  }).toPass({ timeout: 20_000 });
   await expectBalance(page, 'Banco A', 1_500_000);
 
   // estorno da última baixa

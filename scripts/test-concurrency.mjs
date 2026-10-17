@@ -16,9 +16,14 @@ const IMAGE = process.env.PG_TEST_IMAGE ?? 'postgres:17-alpine';
 const OWNER = 'ffffffff-0000-4000-8000-0000000000a0';
 const docker = (a, o = {}) => spawnSync('docker', a, { encoding: 'utf8', ...o });
 
+// «Largada sincronizada»: depois de armGun(), toda chamada espera um alvo comum (advisory lock) liberado só quando o canhão termina;
+// assim as sessões entram no motor AO MESMO TEMPO (sem isso, o atraso de abrir cada sessão pode esconder a falta de uma trava).
+const GUN_KEY = 7777006;
+const GUN_MS = 3500;
+let gunOn = false;
 function psql(sql, { asOwner = false } = {}) {
   const wrapped = asOwner
-    ? `begin; select set_config('request.jwt.claims', '{"sub":"${OWNER}","aal":"aal2","email":"oa@t.invalid"}', true); set local role authenticated; ${sql}; commit;`
+    ? `begin; select set_config('request.jwt.claims', '{"sub":"${OWNER}","aal":"aal2","email":"oa@t.invalid"}', true); set local role authenticated; ${gunOn ? `select pg_advisory_xact_lock_shared(${GUN_KEY});` : ''} ${sql}; commit;`
     : sql;
   return new Promise((resolve) => {
     const p = spawn('docker', ['exec', '-i', name, 'psql', '-X', '-q', '-t', '-A', '-v', 'ON_ERROR_STOP=1', '-U', 'postgres', '-d', 'core'], { stdio: ['pipe', 'pipe', 'pipe'] });
@@ -27,6 +32,15 @@ function psql(sql, { asOwner = false } = {}) {
     p.on('close', (code) => resolve({ code, out: out.trim(), err: err.trim() }));
     p.stdin.end(wrapped);
   });
+}
+async function armGun() {
+  gunOn = true;
+  spawn('docker', ['exec', '-i', name, 'psql', '-X', '-q', '-t', '-A', '-U', 'postgres', '-d', 'core', '-c', `select pg_advisory_lock(${GUN_KEY}); select pg_sleep(${GUN_MS / 1000});`], { stdio: 'ignore' });
+  for (let i = 0; i < 50; i++) {
+    const r = await psql("select count(*) from pg_locks where locktype = 'advisory' and granted and mode = 'ExclusiveLock'");
+    if (r.out.trim() === '1') return;
+    await new Promise((res) => setTimeout(res, 100));
+  }
 }
 const one = async (sql, opts) => { const r = await psql(sql, opts); if (r.code !== 0) throw new Error(r.err); return r.out.split('\n').filter(Boolean).pop(); };
 
@@ -59,6 +73,7 @@ try {
 
   // 1) 10 baixas simultâneas de 30.000 sobre uma parcela de 100.000 (chaves distintas): só 3 cabem
   const i1 = await inst(await entry('receivable', 100000));
+  await armGun();
   const r1 = await Promise.all(Array.from({ length: 10 }, (_, k) => psql(`select public.fin_settle_installment('${i1}', '${A}', 30000, now(), 'pix', null, 'conc-par-${String(k).padStart(3, '0')}-xx')`, { asOwner: true })));
   const ok1 = r1.filter((r) => r.code === 0).length;
   const paid1 = Number(await one(`select coalesce(sum(amount_cents),0) from public.settlements where installment_id = '${i1}' and reversed_at is null`));
@@ -68,6 +83,7 @@ try {
 
   // 2) 8 requisições com a MESMA chave: uma baixa só, todas devolvem o mesmo id
   const i2 = await inst(await entry('receivable', 50000));
+  await armGun();
   const r2 = await Promise.all(Array.from({ length: 8 }, () => psql(`select public.fin_settle_installment('${i2}', '${A}', 20000, now(), 'pix', null, 'conc-same-key-001')`, { asOwner: true })));
   const ids2 = new Set(r2.filter((r) => r.code === 0).map((r) => r.out.split('\n').filter(Boolean).pop()));
   check(r2.every((r) => r.code === 0) && ids2.size === 1, 'mesma chave em 8 requisições: todas ok e devolvem a mesma baixa');
@@ -76,6 +92,7 @@ try {
 
   // 3) estorno simultâneo da mesma baixa: vale uma vez
   const sid = [...ids2][0];
+  await armGun();
   const r3 = await Promise.all(Array.from({ length: 6 }, () => psql(`select public.fin_reverse_settlement('${sid}', 'estorno concorrente de teste')`, { asOwner: true })));
   check(r3.filter((r) => r.code === 0).length === 1, `6 estornos simultâneos: só 1 vale (valeram ${r3.filter((r) => r.code === 0).length})`);
   check(Number(await one(`select count(*) from public.account_movements where settlement_id = '${sid}'`)) === 2, 'livro com original + 1 estorno');
@@ -83,6 +100,7 @@ try {
   // 4) pagamentos simultâneos numa conta que NÃO aceita saldo negativo (saldo 500,00; 8 saídas de 120,00 → cabem 4)
   const payInst = [];
   for (let k = 0; k < 8; k++) payInst.push(await inst(await entry('payable', 12000)));
+  await armGun();
   const r4 = await Promise.all(payInst.map((p, k) => psql(`select public.fin_settle_installment('${p}', '${C}', 12000, now(), 'pix', null, 'conc-neg-${String(k).padStart(3, '0')}-xx')`, { asOwner: true })));
   const ok4 = r4.filter((r) => r.code === 0).length;
   if (process.env.DEBUG_CONC) console.log(r4.filter((r) => r.code !== 0).map((r) => r.err.split('\n')[0]));
@@ -99,6 +117,7 @@ try {
   }
   const payD = [];
   for (let k = 0; k < 5; k++) payD.push(await inst(await entry('payable', 10000)));
+  await armGun();
   const r4b = await Promise.all([
     ...recvSettles.map((sid2) => psql(`select public.fin_reverse_settlement('${sid2}', 'estorno concorrente com pagamento')`, { asOwner: true })),
     ...payD.map((p, k) => psql(`select public.fin_settle_installment('${p}', '${D}', 10000, now(), 'pix', null, 'conc-pd-${String(k).padStart(3, '0')}-xx')`, { asOwner: true })),
@@ -109,6 +128,7 @@ try {
 
   // 5) transferências cruzadas A→B e B→A simultâneas: sem impasse e com saldos consistentes
   const balA0 = await bal(A), balB0 = await bal(B);
+  await armGun();
   const r5 = await Promise.all(Array.from({ length: 20 }, (_, k) => k % 2 === 0
     ? psql(`select public.fin_create_transfer('${org}', '${A}', '${B}', 1000, now(), null, 'conc-xfer-ab-${String(k).padStart(3, '0')}')`, { asOwner: true })
     : psql(`select public.fin_create_transfer('${org}', '${B}', '${A}', 700, now(), null, 'conc-xfer-ba-${String(k).padStart(3, '0')}')`, { asOwner: true })));
